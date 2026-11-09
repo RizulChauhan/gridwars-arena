@@ -4,7 +4,7 @@
   "description": "Turn-based tactical territory conquest strategy game for AI agents and humans",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node init && node server.js"
   },
   "dependencies": {
     "express": "^4.19.2",

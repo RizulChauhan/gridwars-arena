@@ -131,46 +131,101 @@
 
     const PLAYER_COLORS = ['#3A86FF', '#FF006E', '#06D6A0', '#FFBE0B'];
 
-    async function createMatch(numPlayers = 2) {
-      const res = await fetch('/api/match/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ numPlayers })
-      });
-      const data = await res.json();
-      if (data.ok) {
-        myPlayerId = 0;
-        loadMatch(data.match);
+    let isLocalMode = false;
+
+    function initLocalBoard(numPlayers) {
+      const board = [];
+      for (let i = 0; i < 36; i++) {
+        board.push({ index: i, owner: null, armies: Math.floor(Math.random() * 2) + 1 });
       }
+      const starts = [0, 35, 5, 30];
+      for (let p = 0; p < numPlayers; p++) {
+        board[starts[p]].owner = p;
+        board[starts[p]].armies = 5;
+      }
+      return board;
+    }
+
+    async function createMatch(numPlayers = 2) {
+      try {
+        const res = await fetch('/api/match/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ numPlayers })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          isLocalMode = false;
+          myPlayerId = 0;
+          loadMatch(data.match);
+          return;
+        }
+      } catch (e) {
+        // Fallback to in-browser local engine
+        console.log('Backend not detected, running standalone browser engine.');
+      }
+
+      isLocalMode = true;
+      const matchId = 'gw_' + Math.random().toString(36).substring(2, 8);
+      const players = [];
+      for (let i = 0; i < numPlayers; i++) {
+        players.push({
+          id: i,
+          name: i === 0 ? 'Player 1 (You)' : `CyberBot ${i + 1}`,
+          color: PLAYER_COLORS[i],
+          isBot: i !== 0,
+          isJoined: true,
+        });
+      }
+      myPlayerId = 0;
+      loadMatch({
+        id: matchId,
+        status: 'ACTIVE',
+        players,
+        board: initLocalBoard(numPlayers),
+        currentTurn: 0,
+        turnNumber: 1,
+        winner: null,
+        log: [`Match ${matchId} started in Browser Mode.`],
+      });
     }
 
     async function joinMatch() {
       const matchId = document.getElementById('matchIdInput').value.trim();
       if (!matchId) return alert('Please enter match ID');
-      
-      const res = await fetch(`/api/match/${matchId}/join`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'Human Challenger', isBot: false })
-      });
-      const data = await res.json();
-      if (data.ok) {
-        myPlayerId = data.playerId;
-        loadMatch(data.match);
-      } else {
-        // Fallback: just view state
-        fetchState(matchId);
+      try {
+        const res = await fetch(`/api/match/${matchId}/join`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'Human Challenger', isBot: false })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          myPlayerId = data.playerId;
+          loadMatch(data.match);
+        } else {
+          fetchState(matchId);
+        }
+      } catch (e) {
+        alert('Match server not reachable in static mode.');
       }
     }
 
     async function fillBots() {
       if (!currentMatch) return;
+      if (isLocalMode) {
+        currentMatch.players.forEach(p => { if (p.id !== myPlayerId) p.isBot = true; });
+        renderBoard();
+        updateStatus();
+        return;
+      }
       const res = await fetch(`/api/match/${currentMatch.id}/fill-bots`, { method: 'POST' });
       const data = await res.json();
       if (data.ok) loadMatch(data.match);
     }
 
     async function fetchState(matchId) {
+      if (isLocalMode) return;
       const res = await fetch(`/api/match/${matchId}/state`);
       const data = await res.json();
       if (data.ok) loadMatch(data.match);
@@ -266,14 +321,35 @@
     }
 
     async function submitMove(fromCell, toCell) {
+      if (isLocalMode) {
+        const src = currentMatch.board[fromCell];
+        const dst = currentMatch.board[toCell];
+        const moveArmies = src.armies - 1;
+        if (dst.owner === myPlayerId) {
+          src.armies -= moveArmies;
+          dst.armies += moveArmies;
+          currentMatch.log.push(`Player ${myPlayerId} reinforced Cell ${toCell}`);
+        } else {
+          if (moveArmies > dst.armies) {
+            src.armies = 1;
+            dst.owner = myPlayerId;
+            dst.armies = moveArmies - dst.armies;
+            currentMatch.log.push(`Player ${myPlayerId} captured Cell ${toCell}!`);
+          } else {
+            dst.armies -= moveArmies;
+            src.armies = 1;
+            currentMatch.log.push(`Player ${myPlayerId} assaulted Cell ${toCell} but defender held.`);
+          }
+        }
+        renderBoard();
+        updateStatus();
+        return;
+      }
+
       const res = await fetch(`/api/match/${currentMatch.id}/move`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          playerId: myPlayerId,
-          fromCell,
-          toCell,
-        })
+        body: JSON.stringify({ playerId: myPlayerId, fromCell, toCell })
       });
       const data = await res.json();
       if (data.ok) {
@@ -287,6 +363,35 @@
 
     async function endTurn() {
       if (!currentMatch) return;
+      if (isLocalMode) {
+        // Simple Bot Turn Simulation
+        currentMatch.currentTurn = 1;
+        currentMatch.turnNumber++;
+        const botTiles = currentMatch.board.filter(c => c.owner === 1 && c.armies > 1);
+        if (botTiles.length > 0) {
+          const src = botTiles[0];
+          const adj = getAdjacent(src.index);
+          const targetIdx = adj.find(i => currentMatch.board[i].owner !== 1);
+          if (targetIdx !== undefined) {
+            const dst = currentMatch.board[targetIdx];
+            if (src.armies - 1 > dst.armies) {
+              src.armies = 1;
+              dst.owner = 1;
+              dst.armies = 2;
+              currentMatch.log.push(`CyberBot conquered Cell ${targetIdx}!`);
+            }
+          }
+        }
+        // Human gets reinforcements
+        const humanTiles = currentMatch.board.filter(c => c.owner === 0);
+        if (humanTiles.length > 0) humanTiles[0].armies += 2;
+        currentMatch.currentTurn = 0;
+        selectedCell = null;
+        renderBoard();
+        updateStatus();
+        return;
+      }
+
       const res = await fetch(`/api/match/${currentMatch.id}/end-turn`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
