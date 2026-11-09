@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GridWars Arena - Multiplayer Turn-Based Strategy</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --border: #30363d;
+      --text: #f0f6fc;
+      --text-dim: #8b949e;
+      --accent: #58a6ff;
+      --p0: #3a86ff;
+      --p1: #ff006e;
+      --p2: #06d6a0;
+      --p3: #ffbe0b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background: var(--bg); color: var(--text); padding: 20px; min-height: 100vh; display: flex; flex-direction: column; align-items: center; }
+    .header { text-align: center; margin-bottom: 24px; }
+    .header h1 { font-size: 2rem; background: linear-gradient(135deg, #58a6ff, #bc8cff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .header p { color: var(--text-dim); margin-top: 6px; font-size: 0.95rem; }
+    
+    .container { display: flex; flex-wrap: wrap; gap: 24px; max-width: 1000px; width: 100%; justify-content: center; }
+    .panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .controls-panel { width: 340px; display: flex; flex-direction: column; gap: 16px; }
+    .game-panel { display: flex; flex-direction: column; align-items: center; }
+    
+    .btn { background: #238636; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.9rem; transition: 0.15s; }
+    .btn:hover { background: #2ea043; }
+    .btn:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+    .btn-secondary { background: #21262d; border: 1px solid var(--border); color: var(--text); }
+    .btn-secondary:hover { background: #30363d; }
+    .btn-danger { background: #da3633; }
+    .btn-danger:hover { background: #f85149; }
+    
+    .input { background: #0d1117; border: 1px solid var(--border); color: var(--text); padding: 9px 12px; border-radius: 6px; font-size: 0.9rem; width: 100%; }
+    .input:focus { outline: none; border-color: var(--accent); }
+    
+    .grid { display: grid; grid-template-columns: repeat(6, 68px); grid-template-rows: repeat(6, 68px); gap: 8px; margin-top: 16px; user-select: none; }
+    .cell { background: #21262d; border: 2px solid #30363d; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1); position: relative; }
+    .cell:hover { filter: brightness(1.2); }
+    .cell.selected { border-color: #f0f6fc; box-shadow: 0 0 12px rgba(240, 246, 252, 0.5); transform: scale(1.05); }
+    .cell.valid-target { border-color: #ffbe0b; animation: pulse 1s infinite alternate; }
+    @keyframes pulse { from { box-shadow: 0 0 4px #ffbe0b; } to { box-shadow: 0 0 14px #ffbe0b; } }
+    
+    .cell-armies { font-size: 1.25rem; font-weight: bold; }
+    .cell-id { font-size: 0.65rem; color: rgba(255, 255, 255, 0.4); position: absolute; top: 4px; left: 4px; }
+    
+    .p0 { background: rgba(58, 134, 255, 0.25); border-color: var(--p0); }
+    .p1 { background: rgba(255, 0, 110, 0.25); border-color: var(--p1); }
+    .p2 { background: rgba(6, 214, 160, 0.25); border-color: var(--p2); }
+    .p3 { background: rgba(255, 190, 11, 0.25); border-color: var(--p3); }
+    
+    .status-bar { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 12px 16px; background: #0d1117; border-radius: 8px; border: 1px solid var(--border); }
+    .log-box { height: 160px; overflow-y: auto; background: #0d1117; border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-family: monospace; font-size: 0.8rem; display: flex; flex-direction: column-reverse; }
+    .log-entry { margin-bottom: 4px; color: var(--text-dim); }
+    .log-entry.conquer { color: #58a6ff; font-weight: bold; }
+    .log-entry.turn { color: #bc8cff; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>⚔️ GridWars Arena</h1>
+    <p>Turn-Based Territory Conquest for Humans & AI Agents</p>
+  </div>
+
+  <div class="container">
+    <div class="panel controls-panel">
+      <div>
+        <h3 style="margin-bottom: 10px;">Lobby & Match</h3>
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="matchIdInput" class="input" placeholder="Match ID (e.g. gw_abc123)">
+          <button class="btn btn-secondary" onclick="joinMatch()">Join</button>
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 8px;">
+          <button class="btn" style="flex: 1;" onclick="createMatch(2)">New 2P</button>
+          <button class="btn" style="flex: 1;" onclick="createMatch(4)">New 4P</button>
+        </div>
+      </div>
+
+      <div id="activeMatchControls" style="display: none; flex-direction: column; gap: 10px;">
+        <hr style="border: 0; border-top: 1px solid var(--border);">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 0.85rem; color: var(--text-dim);">Match ID: <strong id="currentMatchId" style="color: var(--text);"></strong></span>
+          <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;" onclick="fillBots()">Fill with Bots</button>
+        </div>
+
+        <div style="display: flex; gap: 8px;">
+          <button id="endTurnBtn" class="btn btn-secondary" style="flex: 1;" onclick="endTurn()">End Turn</button>
+          <button class="btn btn-danger" style="flex: 1;" onclick="leaveMatch()">Leave</button>
+        </div>
+      </div>
+
+      <div>
+        <h3 style="margin-bottom: 8px;">Game Rules</h3>
+        <p style="font-size: 0.82rem; color: var(--text-dim); line-height: 1.4;">
+          Conquer the 6x6 grid. Each turn, select an owned tile with &gt;1 army and click an adjacent enemy or neutral tile to attack, or friendly tile to reinforce. Leave at least 1 army behind. Conquer all tiles to achieve total victory!
+        </p>
+      </div>
+
+      <div>
+        <h3 style="margin-bottom: 8px;">Combat Log</h3>
+        <div class="log-box" id="combatLog"></div>
+      </div>
+    </div>
+
+    <div class="panel game-panel">
+      <div class="status-bar">
+        <div>
+          <span style="font-size: 0.85rem; color: var(--text-dim);">Turn <span id="turnCounter">1</span>:</span>
+          <strong id="turnPlayer" style="margin-left: 6px;">Lobby Waiting</strong>
+        </div>
+        <div id="playerBadge" style="font-size: 0.85rem; font-weight: bold;"></div>
+      </div>
+
+      <div class="grid" id="gridBoard">
+        <!-- Rendered via JS -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentMatch = null;
+    let myPlayerId = 0;
+    let selectedCell = null;
+    let pollInterval = null;
+
+    const PLAYER_COLORS = ['#3A86FF', '#FF006E', '#06D6A0', '#FFBE0B'];
+
+    async function createMatch(numPlayers = 2) {
+      const res = await fetch('/api/match/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ numPlayers })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        myPlayerId = 0;
+        loadMatch(data.match);
+      }
+    }
+
+    async function joinMatch() {
+      const matchId = document.getElementById('matchIdInput').value.trim();
+      if (!matchId) return alert('Please enter match ID');
+      
+      const res = await fetch(`/api/match/${matchId}/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Human Challenger', isBot: false })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        myPlayerId = data.playerId;
+        loadMatch(data.match);
+      } else {
+        // Fallback: just view state
+        fetchState(matchId);
+      }
+    }
+
+    async function fillBots() {
+      if (!currentMatch) return;
+      const res = await fetch(`/api/match/${currentMatch.id}/fill-bots`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) loadMatch(data.match);
+    }
+
+    async function fetchState(matchId) {
+      const res = await fetch(`/api/match/${matchId}/state`);
+      const data = await res.json();
+      if (data.ok) loadMatch(data.match);
+    }
+
+    function loadMatch(match) {
+      currentMatch = match;
+      document.getElementById('activeMatchControls').style.display = 'flex';
+      document.getElementById('currentMatchId').innerText = match.id;
+      document.getElementById('matchIdInput').value = match.id;
+      
+      renderBoard();
+      updateStatus();
+
+      if (!pollInterval) {
+        pollInterval = setInterval(() => {
+          if (currentMatch && currentMatch.status === 'ACTIVE') {
+            fetch(`/api/match/${currentMatch.id}/state`)
+              .then(r => r.json())
+              .then(d => { if (d.ok) { currentMatch = d.match; renderBoard(); updateStatus(); } });
+          }
+        }, 1200);
+      }
+    }
+
+    function updateStatus() {
+      if (!currentMatch) return;
+      document.getElementById('turnCounter').innerText = currentMatch.turnNumber;
+      const curPlayer = currentMatch.players[currentMatch.currentTurn];
+      const turnSpan = document.getElementById('turnPlayer');
+      turnSpan.innerText = `${curPlayer.name} (${curPlayer.isBot ? 'Bot' : 'Human'})`;
+      turnSpan.style.color = PLAYER_COLORS[currentMatch.currentTurn];
+
+      const badge = document.getElementById('playerBadge');
+      badge.innerText = `You are Player ${myPlayerId}`;
+      badge.style.color = PLAYER_COLORS[myPlayerId];
+
+      const endTurnBtn = document.getElementById('endTurnBtn');
+      endTurnBtn.disabled = currentMatch.currentTurn !== myPlayerId || currentMatch.status !== 'ACTIVE';
+
+      // Update log
+      const logBox = document.getElementById('combatLog');
+      logBox.innerHTML = currentMatch.log.slice().reverse().map(l => {
+        let cls = 'log-entry';
+        if (l.includes('captured') || l.includes('conquered')) cls += ' conquer';
+        if (l.includes('received')) cls += ' turn';
+        return `<div class="${cls}">${l}</div>`;
+      }).join('');
+    }
+
+    function getAdjacent(index) {
+      const row = Math.floor(index / 6);
+      const col = index % 6;
+      const adj = [];
+      if (row > 0) adj.push(index - 6);
+      if (row < 5) adj.push(index + 6);
+      if (col > 0) adj.push(index - 1);
+      if (col < 5) adj.push(index + 1);
+      return adj;
+    }
+
+    function handleCellClick(index) {
+      if (!currentMatch || currentMatch.status !== 'ACTIVE') return;
+      if (currentMatch.currentTurn !== myPlayerId) return;
+
+      const cell = currentMatch.board[index];
+
+      // If already selected, maybe move/attack
+      if (selectedCell !== null) {
+        if (selectedCell === index) {
+          selectedCell = null;
+          renderBoard();
+          return;
+        }
+
+        const validAdj = getAdjacent(selectedCell);
+        if (validAdj.includes(index)) {
+          // Execute Move
+          submitMove(selectedCell, index);
+          selectedCell = null;
+          return;
+        }
+      }
+
+      // Select new cell
+      if (cell.owner === myPlayerId && cell.armies > 1) {
+        selectedCell = index;
+        renderBoard();
+      } else {
+        selectedCell = null;
+        renderBoard();
+      }
+    }
+
+    async function submitMove(fromCell, toCell) {
+      const res = await fetch(`/api/match/${currentMatch.id}/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerId: myPlayerId,
+          fromCell,
+          toCell,
+        })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        currentMatch = data.match;
+        renderBoard();
+        updateStatus();
+      } else {
+        alert(data.error);
+      }
+    }
+
+    async function endTurn() {
+      if (!currentMatch) return;
+      const res = await fetch(`/api/match/${currentMatch.id}/end-turn`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId: myPlayerId })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        currentMatch = data.match;
+        selectedCell = null;
+        renderBoard();
+        updateStatus();
+      }
+    }
+
+    function leaveMatch() {
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = null;
+      currentMatch = null;
+      document.getElementById('activeMatchControls').style.display = 'none';
+      document.getElementById('gridBoard').innerHTML = '';
+      document.getElementById('combatLog').innerHTML = '';
+    }
+
+    function renderBoard() {
+      const grid = document.getElementById('gridBoard');
+      grid.innerHTML = '';
+      if (!currentMatch) return;
+
+      const validTargets = selectedCell !== null ? getAdjacent(selectedCell) : [];
+
+      currentMatch.board.forEach((cell, idx) => {
+        const div = document.createElement('div');
+        div.className = 'cell';
+        if (cell.owner !== null) {
+          div.classList.add(`p${cell.owner}`);
+        }
+        if (idx === selectedCell) {
+          div.classList.add('selected');
+        }
+        if (validTargets.includes(idx)) {
+          div.classList.add('valid-target');
+        }
+
+        div.innerHTML = `
+          <span class="cell-id">#${idx}</span>
+          <span class="cell-armies" style="color: ${cell.owner !== null ? PLAYER_COLORS[cell.owner] : '#8b949e'};">${cell.armies}</span>
+        `;
+        div.onclick = () => handleCellClick(idx);
+        grid.appendChild(div);
+      });
+    }
+
+    // Auto-create initial demo match on page load
+    createMatch(2);
+  </script>
+</body>
+</html>
